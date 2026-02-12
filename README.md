@@ -36,22 +36,6 @@ The project is suitable for:
 
 ---
 
-## 📂 Project Structure
-
-```
-EarthQuake/
-│
-├── main.py
-├── data/
-│   └── earthquake_dataset.csv
-├── utils/
-│   └── data_processing.py
-├── requirements.txt
-└── README.md
-```
-
----
-
 ## ⚙️ Installation
 
 ### 1️⃣ Clone the Repository
