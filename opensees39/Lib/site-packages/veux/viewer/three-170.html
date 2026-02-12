@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>veux</title>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; display:grid; grid-template-columns: 1.4fr 1fr; gap:16px; padding:16px; }
+    #viewport { height: 80vh; border-radius: 12px; background:#111; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #e6e6e6; text-align:left; }
+    tr { cursor: pointer; }
+    tr.active { background: #eef3ff; }
+    .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+    .toolbar input[type="search"] { flex:1; padding:8px 10px; border-radius: 10px; border: 1px solid #ddd; }
+    .muted { color:#888; font-size:12px; }
+    #count { font-size: 12px; color:#666; }
+    #container { position: relative; }
+    #viewport canvas { display:block; width:100%; height:100%; }
+  </style>
+</head>
+
+<body>
+  <form action="/quit" method="get" target="quit-frame" style="display:inline;">
+    <button type="submit" style="
+        display:inline-flex;align-items:center;justify-content:center;
+        width:24px;height:24px;border:none;border-radius:4px;
+        background:#eee;color:#333;text-decoration:none;
+        font-weight:bold;font-size:16px;
+        transition:background 0.2s ease;cursor:pointer;"
+        onmouseover="this.style.background='#ccc'"
+        onmouseout="this.style.background='#eee'">
+        <svg viewBox="0 0 10 10" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="1" y1="1" x2="9" y2="9" />
+          <line x1="9" y1="1" x2="1" y2="9" />
+        </svg>
+    </button>
+  </form>
+  <iframe name="quit-frame" style="display:none;"></iframe>
+
+  <button id="screenshot" type="button">Save Image</button>
+  <button id="saveSvg" type="button">Save SVG</button>
+
+  <div id="viewport">
+    <!-- <div id="viewport"></div> -->
+    <canvas id="veux-canvas"></canvas>
+  </div>
+
+  <section>
+    <div class="toolbar">
+      <input id="filter" type="search" placeholder="Filter nodes by name or path…" />
+      <span id="count"></span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Node</th><th class="muted">Path</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { SVGRenderer } from 'three/addons/renderers/SVGRenderer.js';
+    let scene, camera, renderer, controls;
+    const canvas = document.querySelector('#veux-canvas');
+
+    // Set up clock and mixer array for animations
+    const clock = new THREE.Clock();
+    const mixers = [];
+
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xffffff);
+
+      camera = new THREE.PerspectiveCamera(
+        40,
+        window.innerWidth / window.innerHeight,
+        1,
+        5000
+      );
+      camera.rotation.y = (45 / 180) * Math.PI;
+      camera.position.set(10, 10, 10);
+
+      //
+      // Lighting
+      //
+      if (false ) {
+        const hlight = new THREE.AmbientLight(0x404040, 100);
+        scene.add(hlight);
+
+        // Adding directional light
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 100);
+        directionalLight.position.set(0, 1, 0);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+
+        // Adding point lights
+        const light = new THREE.PointLight(0xc4c4c4, 10);
+        light.position.set(0, 300, 500);
+        scene.add(light);
+
+        const light2 = new THREE.PointLight(0xc4c4c4, 10);
+        light2.position.set(500, 100, 0);
+        scene.add(light2);
+
+        const light3 = new THREE.PointLight(0xc4c4c4, 10);
+        light3.position.set(0, 100, -500);
+        scene.add(light3);
+
+        const light4 = new THREE.PointLight(0xc4c4c4, 10);
+        light4.position.set(-500, 300, 0);
+        scene.add(light4);
+  
+      } else {
+        const hemiLight = new THREE.HemisphereLight( 0xffffff, 0x8d8d8d, 3 );
+        hemiLight.position.set( 0, 20, 0 );
+        scene.add( hemiLight );
+
+        const dirLight = new THREE.DirectionalLight( 0xffffff, 3);
+        dirLight.position.set( -3, 10, -10 ); // Position it at an angle
+        scene.add( dirLight );
+      }
+      //
+      //
+      //
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        alpha: true,
+        antialias: true // Add antialiasing for smoother edges
+        // premultipliedAlpha: false,
+      });
+      renderer.useLegacyLights = true;
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping; // A tone mapper helps prevent "blown out" whites
+      renderer.toneMappingExposure = 1;
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      // Initialize OrbitControls
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.addEventListener('change', render);
+
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const envTex = pmrem.fromScene(new RoomEnvironment(renderer)).texture;
+      scene.environment = envTex;
+      
+      // Load GLTF model
+      const loader = new GLTFLoader();
+      loader.load('/model.glb', (gltf) => {
+        
+        scene.add(gltf.scene);
+
+        // Set up animations if available
+        if (gltf.animations && gltf.animations.length) {
+          const mixer = new THREE.AnimationMixer(gltf.scene);
+          gltf.animations.forEach((clip) => {
+            mixer.clipAction(clip).play();
+          });
+          mixers.push(mixer);
+        }
+
+        animate();
+      });
+    }
+
+    function animate() {
+      // Update animations
+      const delta = clock.getDelta();
+      mixers.forEach((mixer) => mixer.update(delta));
+
+      controls.update();
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    function render() {
+      renderer.render(scene, camera);
+    }
+
+    init();
+
+    //
+    // Screenshot functionality
+    //
+    document.querySelector('#screenshot').addEventListener('click', () => {
+      render();
+      canvas.toBlob((blob) => {
+        saveBlob(blob, `screencapture-${canvas.width}x${canvas.height}.png`);
+      });
+    });
+  
+    document.querySelector('#saveSvg').addEventListener('click', () => {
+
+      const svgRenderer = new SVGRenderer();
+      svgRenderer.setSize(window.innerWidth, window.innerHeight);
+
+      // // Create a temporary scene with only meshes
+      // const tempScene = new THREE.Scene();
+      // scene.traverse((obj) => {
+      //   if (obj.isMesh) {
+      //     tempScene.add(obj.clone());
+      //   }
+      // });
+      
+      // render the scene to SVG
+      svgRenderer.render(scene, camera);
+
+      // serialize to string
+      const svgData = new XMLSerializer().serializeToString(svgRenderer.domElement);
+
+      // make a Blob and download it
+      const blob = new Blob([svgData], { type: 'image/svg+xml' });
+      saveBlob(blob, `veux-scene.svg`);
+    });
+
+    const saveBlob = (function() {
+      const a = document.createElement('a');
+      document.body.appendChild(a);
+      a.style.display = 'none';
+      return function saveData(blob, fileName) {
+        const url = window.URL.createObjectURL(blob);
+        a.href = url;
+        a.download = fileName;
+        a.click();
+      };
+    }());
+
+
+    //
+    //
+    //
+    class ModelTable {
+      /**
+       * @param {{
+       *  sceneRoot: THREE.Object3D,
+       *  tbody: HTMLElement|string,
+       *  filter?: HTMLElement|string,
+       *  count?: HTMLElement|string,
+       *  emissive?: [number,number,number]
+       *  onFocus?: (pos:THREE.Vector3)=>void
+       * }} opts
+       */
+      constructor(opts) {
+        this.root = opts.sceneRoot;
+        this.tbody  = this._getEl(opts.tbody);
+        this.filter = opts.filter ? this._getEl(opts.filter) : null;
+        this.count  = opts.count  ? this._getEl(opts.count)  : null;
+        this.emissive = opts.emissive || [0.9, 0.3, 0.0];
+        this.onFocus = opts.onFocus || (()=>{});
+
+        this.nodes = [];  // { obj, name, path }
+        this.highlighted = null; // { obj, materials:[{mat, origEmissive:THREE.Color, hadEmissive:boolean}] }
+
+        this._buildList();
+        if (this.filter) this.filter.addEventListener('input', () => this._populate());
+        this._populate();
+      }
+
+      _getEl(x){ return (typeof x === 'string') ? document.querySelector(x) : x; }
+
+      _buildList() {
+        this.nodes.length = 0;
+        const stack = [[this.root, []]];
+        while (stack.length) {
+          const [obj, path] = stack.pop();
+          const name = obj.name || '(unnamed)';
+          const pathArr = [...path, name];
+          this.nodes.push({ obj, name, path: pathArr.join(' / ') });
+          const children = obj.children || [];
+          for (let i = children.length - 1; i >= 0; --i) {
+            stack.push([children[i], pathArr]);
+          }
+        }
+      }
+
+      _populate() {
+        const q = (this.filter?.value || '').trim().toLowerCase();
+        const rows = q ? this.nodes.filter(n => n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) : this.nodes;
+
+        this.tbody.innerHTML = '';
+        for (const entry of rows) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${entry.name}</td><td class="muted">${entry.path}</td>`;
+          tr.addEventListener('click', (e) => {
+            [...this.tbody.querySelectorAll('tr')].forEach(r => r.classList.remove('active'));
+            tr.classList.add('active');
+            this._highlight(entry.obj);
+            e.stopPropagation();
+          });
+          this.tbody.appendChild(tr);
+        }
+        if (this.count) this.count.textContent = `${rows.length} / ${this.nodes.length} nodes`;
+      }
+
+      _clearHighlight() {
+        if (!this.highlighted) return;
+        for (const {mat, origEmissive, hadEmissive} of this.highlighted.materials) {
+          if (hadEmissive) {
+            mat.emissive.copy(origEmissive);
+          } else if ('emissive' in mat) {
+            mat.emissive.setRGB(0,0,0);
+          }
+        }
+        this.highlighted = null;
+      }
+
+      _highlight(obj) {
+        this._clearHighlight();
+
+        // collect materials on meshes under obj
+        const mats = [];
+        obj.updateMatrixWorld(true);
+
+        obj.traverse((n) => {
+          if (n.isMesh && n.material) {
+            const mat = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of mat) {
+              // avoid mutating shared materials: clone if used elsewhere
+              if (m.userData.__sharedCloned !== true && m.userData.__instances > 1) {
+                const clone = m.clone();
+                clone.userData.__sharedCloned = true;
+                // swap the material on this mesh
+                if (Array.isArray(n.material)) {
+                  const idx = n.material.indexOf(m);
+                  if (idx >= 0) n.material[idx] = clone;
+                } else {
+                  n.material = clone;
+                }
+              }
+            }
+          }
+        });
+
+        // After potential cloning, traverse again to gather effective materials
+        obj.traverse((n) => {
+          if (n.isMesh && n.material) {
+            const list = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of list) {
+              if ('emissive' in m) {
+                mats.push({
+                  mat: m,
+                  origEmissive: m.emissive.clone(),
+                  hadEmissive: true
+                });
+                m.emissive.setRGB(this.emissive[0], this.emissive[1], this.emissive[2]);
+              }
+            }
+          }
+        });
+
+        this.highlighted = { obj, materials: mats };
+
+        // focus camera target on node world position
+        const pos = new THREE.Vector3();
+        obj.getWorldPosition(pos);
+        this.onFocus(pos);
+      }
+    }
+
+    // Track material sharing counts so we can decide when to clone
+    (function markMaterialInstances(root) {
+      const counts = new Map();
+      root.traverse((n) => {
+        if (n.isMesh && n.material) {
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          for (const m of mats) counts.set(m, (counts.get(m) || 0) + 1);
+        }
+      });
+      for (const [m, c] of counts) m.userData.__instances = c;
+    })(scene);
+
+    // Hook up the table
+    const table = new ModelTable({
+      sceneRoot: scene,
+      tbody: '#rows',
+      filter: '#filter',
+      count:  '#count',
+      emissive: [0.95, 0.45, 0.1],
+      onFocus: (pos) => {
+        // Smoothly move the OrbitControls target and offset the camera a bit
+        controls.target.copy(pos);
+        const dirVec = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+        camera.position.copy(pos).add(dirVec.multiplyScalar(2.0)); // keep distance ~2
+      }
+    });
+  </script>
+</body>
+</html>

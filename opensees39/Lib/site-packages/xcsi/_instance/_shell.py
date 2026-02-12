@@ -1,0 +1,47 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+from ..csi.utility import UnimplementedInstance, find_row
+from ..names import RE, TYPES
+
+
+def add_shells(instance):
+    names    = instance.names
+    model    = instance.model
+    csi      = instance._tree
+
+    for shell in csi.get("CONNECTIVITY - AREA", []):
+        if "AREA ADDED MASS ASSIGNMENTS" in csi:
+            row = find_row(csi["AREA ADDED MASS ASSIGNMENTS"],
+                           Area=shell["Area"])
+            if row:
+                mass = row["MassPerArea"]
+            else:
+                mass = 0.0
+        else:
+            mass = 0.0
+
+        # Find section
+        assign  = find_row(csi["AREA SECTION ASSIGNMENTS"],
+                           Area=shell["Area"])
+
+        section = names.identify("ShellSection", "section", assign["Section"])
+
+        nodes = tuple(
+            names.identify("Joint", "node", v)
+            for k,v in shell.items() if RE["joint_key"].match(k)
+        )
+
+        if len(nodes) == 4:
+            type = TYPES["Shell"]["Elastic"]
+
+        elif len(nodes) == 3:
+            type = "ShellNLDKGT"
+
+        model.element(type,
+                      names.define("Shell", "element", shell["Area"]),
+                      nodes, section
+        )

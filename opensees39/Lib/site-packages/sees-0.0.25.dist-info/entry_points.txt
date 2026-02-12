@@ -1,0 +1,2 @@
+[console_scripts]
+sees = sees.__main__:main

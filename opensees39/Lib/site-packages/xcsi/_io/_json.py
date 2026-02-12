@@ -1,0 +1,41 @@
+import json 
+
+class DepthLimitedEncoder(json.JSONEncoder):
+    def __init__(self, *args, max_depth=1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_depth = max_depth
+
+    def encode(self, o, _depth=0):
+        if isinstance(o, dict):
+            if _depth >= self.max_depth:
+                # compact formatting
+                return "{" + ", ".join(
+                    f"{json.dumps(k)}: {self.encode(v, _depth+1)}"
+                    for k, v in o.items()
+                ) + "}"
+            else:
+                # pretty formatting with newlines/indents
+                items = []
+                for k, v in o.items():
+                    items.append(
+                        self.indent_str(_depth+1) +
+                        f"{json.dumps(k)}: {self.encode(v, _depth+1)}"
+                    )
+                return "{\n" + ",\n".join(items) + "\n" + self.indent_str(_depth) + "}"
+
+        elif isinstance(o, list):
+            if _depth >= self.max_depth:
+                return "[" + ", ".join(self.encode(v, _depth+1) for v in o) + "]"
+            else:
+                items = []
+                for v in o:
+                    items.append(
+                        self.indent_str(_depth+1) + self.encode(v, _depth+1)
+                    )
+                return "[\n" + ",\n".join(items) + "\n" + self.indent_str(_depth) + "]"
+
+        else:
+            return json.dumps(o)
+
+    def indent_str(self, depth):
+        return " " * (self.indent * depth if self.indent else 0)

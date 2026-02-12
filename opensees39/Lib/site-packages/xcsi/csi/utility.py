@@ -1,0 +1,39 @@
+
+class UnimplementedInstance:
+    def __init__(self, name, object=None, table=None, issue=None):
+        self.name = name 
+        self.object = object
+        self.table = table
+        self.issue = issue
+
+    def __repr__(self):
+        return f"{self.name}: {self.object}"
+
+
+def find_row(table, **kwds) -> dict:
+
+    for row in table:
+        match = True
+        for k, v in kwds.items():
+            if k not in row or row[k] != v:
+                match = False
+                break
+
+        if match:
+            return row
+
+
+def find_rows(table, **kwds) -> list:
+    rows = []
+    for row in table:
+        match = True
+        for k, v in kwds.items():
+            if k not in row or row[k] != v:
+                match = False
+                break
+
+        if match:
+            rows.append(row)
+
+    return rows
+

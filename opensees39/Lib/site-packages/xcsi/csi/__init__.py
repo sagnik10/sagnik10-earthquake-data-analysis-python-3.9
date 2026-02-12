@@ -1,0 +1,127 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+#
+from .parse import load
+import numpy as np
+from .utility import UnimplementedInstance
+from .._instance.link import create_links
+from ._frame.outlines import collect_geometry as collect_outlines
+from .utility import find_row, find_rows
+
+
+
+def assemble(csi, model=None, verbose=False):
+    from xcsi.job import Job
+    return Job(csi).instance(verbose=verbose)
+
+
+
+def create_model(csi,
+                 model,
+                 verbose=False,
+                 instance=None):
+    """
+    Parameters
+    ==========
+    csi: a dictionary formed by calling ``csi.parse.load("file.b2k")``
+
+    Returns
+    =======
+    model: xara.Model
+    """
+    # NOTE: This function was from an older design, and is being refactored
+    # for the new Job/Instance oriented design.
+
+
+    from .point import create_points
+    from ._material import create_materials
+
+
+    # Track used tables
+    used = {
+        "TABLES AUTOMATICALLY SAVED AFTER ANALYSIS"
+    }
+
+    #
+    # Create model
+    #
+
+    used.add("ACTIVE DEGREES OF FREEDOM")
+
+#   dofs = [f"U{i}" for i in range(1, ndm+1)]
+#   if ndm == 3:
+#       dofs = dofs + ["R1", "R2", "R3"]
+#   else:
+#       dofs = dofs + ["R3"]
+
+    #
+    # Create nodes
+    #
+    create_points(instance)
+
+    #
+    # Create materials and sections
+    #
+    create_materials(instance)
+
+    _create_sections(instance)
+
+
+
+    # Unimplemented objects
+    for item in [
+        "CONNECTIVITY - CABLE",
+        "CONNECTIVITY - TENDON"]:
+        for elem in csi.get(item, []):
+            instance.names.log(UnimplementedInstance(item, elem))
+
+    #
+    # Add elements
+    #
+    _add_elements(instance)
+
+
+    if verbose:
+        instance._print_log()
+
+    if verbose and False:
+        for table in csi:
+            if table not in used:
+                print(f"\t{table}", file=sys.stderr)
+
+
+    model.frame_tags = instance.names._library.get("frame_tags", {})
+
+    return model
+
+
+def _create_sections(instance):
+    from ._section  import create_shell_sections
+    from ._frame.section import add_frame_sections
+    csi = instance._tree
+    model = instance.model
+    names = instance.names
+
+    # 2) Frame
+    add_frame_sections(csi, model, names)
+
+    # 3) Shell
+    create_shell_sections(instance)
+
+
+def _add_elements(instance):
+    """
+    Add elements to the model.
+    """
+    from ._frame import add_frames
+    from .._instance._shell import add_shells
+    from ._solid import add_solids
+
+    create_links(instance)
+    add_frames(instance)
+    add_shells(instance)
+    add_solids(instance)

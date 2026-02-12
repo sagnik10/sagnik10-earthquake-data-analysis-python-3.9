@@ -1,0 +1,295 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+"""
+"SECTION DESIGNER PROPERTIES 01 - GENERAL"
+"SECTION DESIGNER PROPERTIES 02 - REINFORCING AT SHAPE EDGES"
+"SECTION DESIGNER PROPERTIES 03 - REINFORCING AT SHAPE CORNERS"
+"SECTION DESIGNER PROPERTIES 04 - SHAPE I/WIDE FLANGE"
+"SECTION DESIGNER PROPERTIES 05 - SHAPE CHANNEL"
+"SECTION DESIGNER PROPERTIES 06 - SHAPE TEE"
+"SECTION DESIGNER PROPERTIES 07 - SHAPE ANGLE"
+"SECTION DESIGNER PROPERTIES 08 - SHAPE DOUBLE ANGLE"
+"SECTION DESIGNER PROPERTIES 09 - SHAPE BOX/TUBE"
+"SECTION DESIGNER PROPERTIES 10 - SHAPE PIPE"
+"SECTION DESIGNER PROPERTIES 11 - SHAPE PLATE"
+"SECTION DESIGNER PROPERTIES 12 - SHAPE SOLID RECTANGLE"
+"SECTION DESIGNER PROPERTIES 13 - SHAPE SOLID CIRCLE"
+"SECTION DESIGNER PROPERTIES 14 - SHAPE SOLID SEGMENT"
+"SECTION DESIGNER PROPERTIES 15 - SHAPE SOLID SECTOR"
+"SECTION DESIGNER PROPERTIES 16 - SHAPE POLYGON"
+
+"SECTION DESIGNER PROPERTIES 17 - SHAPE REINFORCING SINGLE"
+"SECTION DESIGNER PROPERTIES 18 - SHAPE REINFORCING LINE"
+"SECTION DESIGNER PROPERTIES 19 - SHAPE REINFORCING RECTANGLE"
+"SECTION DESIGNER PROPERTIES 20 - SHAPE REINFORCING CIRCLE"
+
+"SECTION DESIGNER PROPERTIES 21 - SHAPE REFERENCE LINE"
+"SECTION DESIGNER PROPERTIES 22 - SHAPE REFERENCE CIRCLE"
+
+"SECTION DESIGNER PROPERTIES 23 - SHAPE CALTRANS SQUARE"
+"SECTION DESIGNER PROPERTIES 24 - SHAPE CALTRANS CIRCLE"
+"SECTION DESIGNER PROPERTIES 25 - SHAPE CALTRANS HEXAGON"
+"SECTION DESIGNER PROPERTIES 26 - SHAPE CALTRANS OCTAGON"
+
+"SECTION DESIGNER PROPERTIES 27 - CALTRANS LONGITUDINAL REBAR"
+"SECTION DESIGNER PROPERTIES 28 - CALTRANS LONGITUDINAL TENDONS"
+"SECTION DESIGNER PROPERTIES 29 - CALTRANS CONFINEMENT REBAR"
+"SECTION DESIGNER PROPERTIES 30 - FIBER GENERAL"
+"SECTION DESIGNER PROPERTIES 31 - STRESS POINT"
+"SECTION DESIGNER PROPERTIES 32 - BRIDGE SECTION SHELL LAYOUT"
+"SECTION DESIGNER PROPERTIES 33 - BRIDGE SECTION SOLID LAYOUT"
+"SECTION DESIGNER PROPERTIES 34 - BRIDGE SECTION CUTLINE"
+"SECTION DESIGNER PROPERTIES 35 - BRIDGE SECTION CENTERLINE"
+"""
+from ..utility import find_row, find_rows, UnimplementedInstance
+import numpy as np
+from ...names import Names
+from xcsi.csi._material import find_material
+from xcsi._assembly.frame import FrameSection
+
+from xsection import ElasticConstants
+from xsection import PolygonSection as Polygon, CompositeSection
+from xsection.library import WideFlange, Rectangle, Equigon, Circle, HollowRectangle, Angle, Pipe
+
+from xara.benchmarks import create_section as create_xara_section
+
+class FrameSectionPolicy:
+    pass
+
+
+def add_frame_sections(csi, model, conv, policy=None):
+
+    if len(csi.get("CONNECTIVITY - FRAME", [])) == 0:
+        return 
+
+    for sect in csi.get("FRAME SECTION PROPERTIES 01 - GENERAL", []):
+
+        # Ensure this section has not already been defined in the xara.Model
+        if not conv.identify("AnalSect", "section",     sect["SectionName"]) and \
+           not conv.identify("AnalSect", "integration", sect["SectionName"]):
+
+            if (s:= create_section(csi, sect, conv)) is not None:
+                try:
+                    shape = s._create_model()
+                except:
+                    shape = None
+
+                has_material = "Material" in sect and sect["Material"] is not None and sect["Material"] != ""
+
+                # 1) Multiaxial
+                if False: #s.has_multiaxial and has_material and shape is not None:
+                    tag  = conv.define("AnalSect", "section", f"Multiaxial/{s.name}")
+                    mtag = conv.identify("Material", "material", sect["Material"])
+                    create_xara_section(model, "ShearFiber", tag, shape, mtag, shear=False)
+
+                # 2) Uniaxial
+                if s.has_uniaxial and has_material and shape is not None:
+                    # TODO: define uniaxial section
+                    pass
+
+                # 3) Elastic
+                if (e := s.elastic()) is not None:
+                    model.section("FrameElastic",
+                            conv.define("AnalSect", "section", sect["SectionName"]), #self.index,
+                            A  = e.A,
+                            Ay = e.Ay,
+                            Az = e.Az,
+                            Iz = e.Iz,
+                            Iy = e.Iy,
+                            J  = e.J,
+                            E  = e.E,
+                            G  = e.G
+                    )
+                continue
+
+            if (sections := _create_integration(csi, sect)) is not None:
+                tags = []
+                for s in sections:
+                    tag = conv.define("AnalSect", "section", sect["SectionName"])
+                    tags.append(tag)
+
+                    if (e := s[0].elastic()) is not None:
+                        model.section("FrameElastic",
+                                    tag,
+                                    A  = e.A,
+                                    Ay = e.Ay,
+                                    Az = e.Az,
+                                    Iz = e.Iz,
+                                    Iy = e.Iy,
+                                    J  = e.J,
+                                    E  = e.E,
+                                    G  = e.G
+                        )
+
+                model.beamIntegration("UserDefined",
+                          conv.define("AnalSect", "integration", sect["SectionName"]),
+                          len(sections),
+                          tuple(tags),
+                          tuple(i[1] for i in sections),
+                          tuple(i[2] for i in sections))
+                continue
+
+            conv.log(UnimplementedInstance(f"FrameSection.Shape={sect['Shape']}"))
+            # assert False, sect
+
+    return
+
+
+def iter_sections(csi, names=None, table=None):
+    if names is None:
+        names = Names()
+
+    if table is None:
+        table = "FRAME SECTION PROPERTIES 01 - GENERAL"
+
+    for sect in csi.get(table, []):
+
+        if not names.identify("AnalSect", "section",     sect["SectionName"]) and \
+           not names.identify("AnalSect", "integration", sect["SectionName"]):
+            if (s:= create_section(csi, sect, names)) is not None:
+                yield s, sect["SectionName"]
+
+            else:
+                names.log(UnimplementedInstance(f"FrameSection.Shape={sect['Shape']}"))
+                continue
+
+
+
+def create_section(csi, prop_01, names=None,
+                    elastic_only=False,
+                    render_only=False) ->"FrameSection":
+    # NOTE: This function is called from IRiE
+
+    if names is None:
+        names = Names()
+
+    #
+    if isinstance(prop_01, str):
+        name = prop_01
+        prop_01 = find_row(csi.get("FRAME SECTION PROPERTIES 01 - GENERAL",[]), SectionName=name)
+        if prop_01 is None:
+            prop_01 = find_row(csi.get("FRAME SECTION PROPERTIES - BRIDGE OBJECT FLAGS",[]), SectionName=name)
+            if prop_01 is None:
+                raise ValueError(f"Section {name} not found in either table.")
+    else:
+        name = prop_01["SectionName"]
+
+    #
+    # 1)
+    #
+    segments = find_rows(csi.get("FRAME SECTION PROPERTIES 05 - NONPRISMATIC",[]),
+                            SectionName=name)
+
+
+    if prop_01.get("Shape",None) not in {"Nonprismatic"}:
+        s = FrameSection(csi, prop_01)
+        return s
+
+    # Note: if len(segments) == 1 it will be handled in _create_integration
+    # 2)
+    if prop_01["Shape"] == "Nonprismatic" and len(segments) != 1 and all(segment["StartSect"] == segment["EndSect"] for segment in segments): #section["NPSecType"] == "Advanced":
+
+        # TODO: Currently just treating advanced as normal prismatic section
+
+        if not names.identify("AnalSect", "section", prop_01["SectionName"]) : #segments[0]["StartSect"]):
+
+
+            # find properties
+            p = find_row(csi["FRAME SECTION PROPERTIES 01 - GENERAL"],
+                                SectionName=segments[0]["StartSect"])
+
+            assert p is not None
+
+            return FrameSection(csi, p)
+
+
+def _create_integration(csi, prop_01):
+    # 3)
+    segments = find_rows(csi["FRAME SECTION PROPERTIES 05 - NONPRISMATIC"],
+                            SectionName=prop_01["SectionName"])
+
+    if prop_01["Shape"] != "Nonprismatic" or len(segments) != 1: 
+        return None
+
+
+    # Interpolate linear-elastic sections properties
+    assert len(segments) == 1
+
+    segment = segments[0]
+
+    # Create property interpolation
+    def interpolate(point, prop):
+        si = find_row(csi["FRAME SECTION PROPERTIES 01 - GENERAL"],
+                            SectionName=segment["StartSect"]
+        )
+        sj = find_row(csi["FRAME SECTION PROPERTIES 01 - GENERAL"],
+                            SectionName=segment["EndSect"]
+        )
+
+        # TODO: Taking material from first section assumes si and sj have the same
+        # material
+        material = find_row(csi["MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES"],
+                            Material=si["Material"]
+        )
+        assert material == find_row(csi["MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES"],
+                            Material=sj["Material"]
+        )
+
+        if prop in material:
+            start = end = material[prop]
+        else:
+            start = si[prop]
+            end = sj[prop]
+
+        power = {
+            "Linear":    1,
+            "Parabolic": 2,
+            "Cubic":     3
+        }[segment.get(f"E{prop}Var", "Linear")]
+
+        return start*(1 + point*((end/start)**(1/power)-1))**power
+
+    #
+    # Define a numerical integration scheme
+    #
+    from numpy.polynomial.legendre import leggauss
+    nip = 5
+    sections = []
+    for x,wi in zip(*leggauss(nip)):
+        xi = (1+x)/2
+
+        sec = _InterpolatedSection(
+            ElasticConstants(
+                        A  = interpolate(xi, "Area"),
+                        Ay = interpolate(xi, "AS2"),
+                        Az = interpolate(xi, "AS2"),
+                        Iz = interpolate(xi, "I33"),
+                        Iy = interpolate(xi, "I22"),
+                        J  = interpolate(xi, "TorsConst"),
+                        E  = interpolate(xi, "E1"),
+                        G  = interpolate(xi, "G12")
+            )
+        )
+
+        sections.append((sec, xi, wi/2))
+
+
+    return sections
+
+
+
+class _InterpolatedSection: #(FrameSection):
+    def __init__(self, elastic):
+        self._elastic = elastic
+        self._plastic = None
+
+    def elastic(self):
+        return self._elastic
+
+    def plastic(self):
+        return self._plastic
+

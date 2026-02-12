@@ -1,0 +1,29 @@
+Metadata-Version: 2.1
+Name: impi-rt
+Version: 2021.17.2
+Summary: Intel® MPI Library
+Home-page: https://software.intel.com/en-us/mpi-library
+Author: Intel Corporation
+Author-email: scripting@intel.com
+License: Intel Simplified Software License
+Platform: UNKNOWN
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Education
+Classifier: Intended Audience :: System Administrators
+Classifier: Intended Audience :: Other Audience
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Software Development :: Libraries
+Classifier: License :: Other/Proprietary License
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+
+The Intel® MPI Library is a multi-fabric message passing library that implements the Message Passing Interface, version 3.1 (MPI-3.1) specification. Use the library to develop applications that can run on multiple cluster interconnects.
+The Intel MPI Library has the following features:
+•	High scalability
+•	Low overhead, enables analyzing large amounts of data
+•	MPI tuning utility for accelerating your applications
+•	Interconnect independence and flexible runtime fabric selection
+The Intel MPI Library is available as a standalone product and as part of oneAPI or the Intel Parallel Studio XE Cluster Edition.
+

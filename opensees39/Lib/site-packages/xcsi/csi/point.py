@@ -1,0 +1,237 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+
+from .utility import UnimplementedInstance, find_row, find_rows
+
+def create_points(instance):
+    assembly = instance.assembly
+    names    = instance.names
+    model    = instance.model
+    csi      = instance._tree
+
+    ndm = assembly.ndm
+    ndf = assembly.ndf
+#   dofs = config["dofs"]
+    dofs = csi["ACTIVE DEGREES OF FREEDOM"][0]
+
+
+    def _not_rotated(axes):
+        return axes is None or (not axes.get("AdvanceAxes", False) and
+          all(map(lambda i: axes[f"Angle{i}"]==0.0, "ABC")))
+
+    for node in csi["JOINT COORDINATES"]:
+        if find_row(csi.get("JOINT SPRING ASSIGNMENTS 2 - COUPLED",[]),Joint=node["Joint"]):
+            names.log(UnimplementedInstance("Joint.Spring.Coupled", node))
+
+        node_obj = assembly._make_node(node)
+
+        node_tag = names.define("Joint", "node", node["Joint"])
+
+        model.node(node_tag, node_obj.location)
+
+        for i,v in enumerate(dofs.values()):
+            if not v:
+                model.fix(node_tag, dof=i+1)
+
+        #
+        # For any rotated nodes, create a duplicate node
+        #
+        axes = find_row(csi.get("JOINT LOCAL AXES ASSIGNMENTS 1 - TYPICAL", []),Joint=node["Joint"])
+
+        springs = find_row(csi.get("JOINT SPRING ASSIGNMENTS 1 - UNCOUPLED", []),Joint=node["Joint"])
+
+        if _not_rotated(axes):
+            # if not rotated, the base node is just an alias for the real node
+            if springs is None:
+                node_base = names.define("JointBase", "node", node["Joint"], node_tag)
+            else:
+                # if springs are defined, create a separate base node
+                spring_tag = names.define("JointBase", "node", node["Joint"])
+                model.node(spring_tag, node_obj.location)
+                for i,dof_key in enumerate(("U1","U2","U3","R1","R2","R3")):
+                    if springs[dof_key] != 0.0:
+                        mat = names.define("Material", "material")
+                        model.uniaxialMaterial(
+                            "Elastic",
+                            mat,
+                            springs[dof_key]
+                        )
+                        model.element(
+                            "zeroLength",
+                            names.define("Joint", "element"),
+                            (spring_tag, node_tag),
+                            mat=mat,
+                            dir=i+1)
+                    else:
+                        model.equalDOF(node_tag, spring_tag, i+1)
+                
+        else:
+            # if rotated, create aux node to represent the base;
+            # no fourth argument means a new unique tag is created
+            node_base = names.define("JointBase", "node", node["Joint"])
+            assert node_base != node_tag
+            assert names.identify("JointBase", "node", node["Joint"]) == node_base
+            model.node(node_base, 
+                       node_obj.location)
+            # for i,v in enumerate(dofs.values()):
+            #     if not v:
+            #         model.fix(node_base, dof=i+1)
+            model.constrain(node_base, 
+                            node_tag, #node_base,
+                            rotate=_joint_rotvec(instance, node, axes).tolist()
+            )
+
+
+                    
+    for node in csi.get("JOINT RESTRAINT ASSIGNMENTS", []):
+        node_tag = names.identify("JointBase", "node", node["Joint"])
+        # Only fix dofs that werent aready fixed globally
+        # Note that dof keys look like UX, RY, etc, but in the restraint
+        # table they look like U1, R2, etc
+        model.fix(node_tag, tuple(int(node[f"{key[0]}{'XYZ'.find(key[1])+1}"]) if dofs[key] else 0 for key in dofs))
+
+
+    for node in csi.get("JOINT ADDED MASS ASSIGNMENTS", []):
+        mass = [node[f"Mass{i+1}"] for i in range(ndm)]
+        mass = mass + [0.0]*(ndf-len(mass))
+        node_tag = names.identify("Joint", "node", node["Joint"])
+        if node["CoordSys"].upper() != "GLOBAL":
+            names.log(UnimplementedInstance(f"Joint.Mass.CoordSys={node['CoordSys']}", node))
+        model.mass(node_tag, tuple(mass))
+
+
+    for node in csi.get("JOINT ADDED MASS BY VOLUME ASSIGNMENTS", []):
+        dens = find_row(csi.get("MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES",[]),
+                        Material=node["Material"])["UnitMass"]
+        vols = [node[f"Vol{i}"] for i in range(1,ndm+1) if f"Vol{i}" in node]
+        vols = vols + [0.0]*(ndf-len(vols))
+        mass = tuple(vol*dens for vol in vols)
+        model.mass(node["Joint"], mass)
+
+
+    "JOINT CONSTRAINT ASSIGNMENTS"
+    "CONSTRAINT DEFINITIONS - BEAM"
+    "CONSTRAINT DEFINITIONS - BODY"
+    "CONSTRAINT DEFINITIONS - EQUAL"
+    "CONSTRAINT DEFINITIONS - LINE"
+    "CONSTRAINT DEFINITIONS - LOCAL"
+    "CONSTRAINT DEFINITIONS - PLATE"
+    "CONSTRAINT DEFINITIONS - ROD"
+    "CONSTRAINT DEFINITIONS - WELD"
+    "CONSTRAINT DEFINITIONS - BRIDGE OBJECT FLAGS"
+
+    _apply_constraints(instance)
+
+    _create_diaphragms(instance)
+
+
+    # TODO: handle "JOINT MERGE NUMBER ASSIGNMENTS"
+
+    return
+
+
+def _joint_rotvec(instance, node, axes):
+    names = instance.names
+    csi = instance._tree
+
+    if not axes.get("AdvanceAxes", False):
+        from shps.rotor import log, exp
+        from math import radians as _rad
+        rotvec = log(
+             exp([0.0, 0.0, _rad(axes["AngleA"])])
+           @ exp([0.0, _rad(axes["AngleB"]), 0.0])
+           @ exp([_rad(axes["AngleC"]), 0.0, 0.0])
+        )
+        return rotvec
+
+    axes = find_row(csi.get("JOINT LOCAL AXES ASSIGNMENTS 2 - ADVANCED", []),Joint=node["Joint"])
+    if axes is None:
+        names.log(UnimplementedInstance(f"Joint.Restraint.AdvancedAxes=True without ADVANCED table"))
+
+    return instance.assembly._coordinate_system(axes["AxCoordSys"]).rotation_vector
+
+
+def _create_diaphragms(instance):
+    tables = instance._tree
+    model  = instance.model
+    conv   = instance.names
+
+    for dia in tables.get("CONSTRAINT DEFINITIONS - DIAPHRAGM", []):
+        if dia.get("CoordSys", "GLOBAL").upper() != "GLOBAL":
+            instance._log(UnimplementedInstance("Diaphragm.CoordSys!=GLOBAL", dia))
+            continue
+        if dia.get("Axis", None) not in ("X", "Y", "Z"):
+            instance._log(UnimplementedInstance("Diaphragm.Axis not in (X,Y,Z)", dia))
+            continue
+        if dia.get("CoordSys", "GLOBAL").upper() != "GLOBAL":
+            instance._log(UnimplementedInstance("Diaphragm.CoordSys!=GLOBAL", dia))
+            continue
+            
+
+        joints = find_rows(tables.get("JOINT CONSTRAINT ASSIGNMENTS", []), Constraint=dia["Name"])
+        if len(joints) < 2:
+            instance._log(UnimplementedInstance("Diaphragm with less than 2 joints", dia))
+            continue
+
+        nodes = [conv.identify("JointBase", "node", joint["Joint"]) for joint in joints]
+
+        model.rigidDiaphragm("XYZ".index(dia["Axis"])+1, tuple(nodes))
+
+
+def _apply_constraints(ins):
+    sap = ins._tree
+    model = ins.model
+    conv  = ins.names
+
+    DOFS = ("UX","UY","UZ","RX","RY","RZ")
+    # The format of body dictionary is {'node number':'constraint name'}
+    for body in sap.get("CONSTRAINT DEFINITIONS - BODY", []):
+        constraints = {}
+        if not all(value for value in map(lambda x: body[x], DOFS)):
+            ins._log(UnimplementedInstance("Joint.Constraint.Body.IncompleteDOF", body))
+            continue
+
+        for constraint in  find_rows(sap.get("JOINT CONSTRAINT ASSIGNMENTS",[]), Constraint=body["Name"]):
+            if "Type" in constraint and constraint["Type"] == "Body":
+                # map node number to constraint
+                constraints[constraint["Joint"]] = constraint["Constraint"]
+            else:
+                ins._log(UnimplementedInstance("Joint.Constraint", constraint))
+
+        # Sort the dictionary by body name and return a list [(node, body name)]
+        constraints = list(sorted(constraints.items(), key=lambda x: x[1]))
+
+
+        if len(constraints) > 0:
+            nodes = []
+            # Assign the first body name to the pointer
+            pointer = constraints[0][1]
+
+            # Traverse the tuple. If the second element in the tuple, the body
+            # name, is the same as the pointer, then store the node number, 
+            # into nodes.
+            for node, constraint in constraints:
+                if constraint == pointer:
+                    nodes.append(node)
+                else:
+                    # First write the nodes in nodes to the body file
+                    for le in range(len(nodes)-1):
+                        ni = conv.identify("JointBase", "node", nodes[0])
+                        nj = conv.identify("JointBase", "node", nodes[le + 1])
+                        model.eval(f"rigidLink beam {ni} {nj}\n")
+                    # Restore nodes and save the node that returns False.
+                    nodes = []
+                    nodes.append(node)
+                    # The pointer is changed to the new body name
+                    pointer = constraint
+
+            # After the for loop ends, write the nodes in the nodes of the last loop to the body file.
+            for le in range(len(nodes)-1):
+                ni = conv.identify("JointBase", "node", nodes[0])
+                nj = conv.identify("JointBase", "node", nodes[le + 1])
+                model.eval(f"rigidLink beam {ni} {nj}\n")
+

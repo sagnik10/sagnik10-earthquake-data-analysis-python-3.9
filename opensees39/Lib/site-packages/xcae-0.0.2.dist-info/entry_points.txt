@@ -1,0 +1,2 @@
+[console_scripts]
+openbim = xara_abaqus.__main__:main

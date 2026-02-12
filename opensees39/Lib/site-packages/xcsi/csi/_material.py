@@ -1,0 +1,112 @@
+from xcsi.csi.utility import find_row, find_rows, UnimplementedInstance
+
+def find_material(csi, material_name):
+    E = None 
+    G = None 
+
+    material = find_row(csi.get("MATERIAL PROPERTIES 01 - GENERAL", []),
+                        Material=material_name)
+
+    if material is not None and "E" in material:
+        E = material.get("E", None)
+        if "G" in material:
+            G = material["G"]
+        elif "U" in material:
+            G = E/2/(1+material.get("U", None))
+    
+    if E is None or G is None:
+        material = find_row(csi.get("MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES", []),
+                            Material=material_name
+        )
+        if material is not None:
+            E = material.get("E1", None)
+            if "G12" in material:
+                G = material["G12"]
+            elif "U12" in material:
+                G = E/2/(1+material["U12"])
+
+    return {
+        "E": E,
+        "G": G,
+        "v": ( None if E is None or G is None else E/(2*G) - 1),
+        "density": (material.get("UnitMass", 0) if material is not None else 0),
+    }
+
+
+def create_materials(instance):
+    "SD STRESS-STRAIN 01 - REBAR PARK"
+    "SD STRESS-STRAIN 02 - REBAR SIMPLE"
+    "SD STRESS-STRAIN 03 - STRUCTURAL STEEL"
+    "SD STRESS-STRAIN 04 - CONCRETE SIMPLE"
+    "SD STRESS-STRAIN 05 - CONCRETE MANDER UNCONFINED"
+    "SD STRESS-STRAIN 06 - CONCRETE MANDER CONFINED CIRCLE"
+    "SD STRESS-STRAIN 07 - CONCRETE MANDER CONFINED RECTANGLE"
+    conv = instance.names
+    model = instance.model
+    csi = instance._tree
+
+    #
+    # 1) Material
+    #
+
+    for mat in csi.get("MATERIAL PROPERTIES 01 - GENERAL", []):
+        E = None
+        poisson = None
+        density = None
+        Fc = None
+        Fy = None
+        Fu = None
+        Hi = None
+        name = mat["Material"]
+
+        if (p02 := find_row(csi.get("MATERIAL PROPERTIES 02 - BASIC MECHANICAL PROPERTIES", []), Material=mat["Material"])):
+            E = p02["E1"]
+            poisson = p02.get("U12", None)
+            density = p02.get("UnitMass", None)
+        
+        if (p03a := find_row(csi.get("MATERIAL PROPERTIES 03A - STEEL DATA", []), Material=mat["Material"])):
+            Fy = p03a.get("EffFy", p03a.get("Fy", None))
+            Fu = p03a.get("EffFu", p03a.get("Fu", None))
+            if "SHard" in p03a:
+                Hi = p03a["SHard"]*E 
+
+        if (p03j := find_row(csi.get("MATERIAL PROPERTIES 03J - COUPLED NONLINEAR VON MISES DATA", []), Material=mat["Material"])):
+            Fy = p03j.get("YieldStress", None)
+
+
+        if mat.get("SymType", "") == "Isotropic" and E is not None and Fy is None:
+            model.nDMaterial(
+                "ElasticIsotropic",
+                conv.define("Material", "material", name),
+                E,       # Young
+                poisson, # Poisson
+            )
+
+        elif mat.get("SymType", "")  == "Uniaxial":
+            # TODO: implement other uniaxial materials
+            pass
+
+        elif mat.get("SymType", "")  == "Isotropic" and E is not None and Fy is not None:
+            # model.nDMaterial(
+            #     "ElasticIsotropic",
+            #     conv.define("Material", "material", name),
+            #     E,       # Young
+            #     poisson, # Poisson
+            # )
+
+            model.nDMaterial(
+                "J2",
+                conv.define("Material", "material", name),
+                E=E,  # Young
+                nu=poisson, # Poisson
+                Fy=Fy, # Yield
+                Hiso=Hi or 0,
+                Fs=Fy,
+                Hsat=0
+            )
+
+        else:
+            conv.log(UnimplementedInstance(f"Material.SymType={mat.get('SymType', '')}", mat))
+            continue
+        
+

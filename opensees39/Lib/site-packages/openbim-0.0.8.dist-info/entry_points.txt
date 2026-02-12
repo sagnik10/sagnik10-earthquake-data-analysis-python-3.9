@@ -1,0 +1,2 @@
+[console_scripts]
+openbim = openbim.__main__:main

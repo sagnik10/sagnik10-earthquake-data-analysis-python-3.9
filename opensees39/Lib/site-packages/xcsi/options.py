@@ -1,0 +1,98 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+class ModelOptions:
+    def __init__(self, instance, options_list):
+        self._options = {
+            "Frame": []
+        }
+        self.__instance = instance
+    
+    def find(self, **kwds):
+        if "Frame" in kwds:
+            name = kwds["Frame"]
+            return _FrameOptions(name, self.__instance._tree, self.__instance)
+
+
+class ConfigNL01(ModelOptions):
+    "Material Nonlinearity"
+    def __init__(self, instance, options_list):
+        super().__init__(instance, options_list)
+
+class ConfigNL02(ModelOptions):
+    "Geometric Nonlinearity"
+    def __init__(self, instance, options_list):
+        super().__init__(instance, options_list)
+
+class ConfigNL03(ModelOptions):
+    "Geometric and Material Nonlinearity"
+    def __init__(self, instance, options_list):
+        super().__init__(instance, options_list)
+
+class _FrameOptions:
+    use_shear: bool = True
+    inelastic: str  = None  # "Uniaxial", "Multiaxial", "Hinge"
+    prismatic: bool = True
+
+    class Geometry:
+        Linear       = 0 
+        PDelta       = 1
+        Corotational = 1
+        Exact        = 2
+
+    def __init__(self, name, csi, instance=None, options=None):
+        if options is None:
+            options = {}
+
+        self.name = name
+        self._csi = csi
+        self._instance = instance
+
+        self._geometry: _FrameOptions.Geometry = options.get("geometry", None)
+        self._use_shear: bool = options.get("use_shear", None) 
+        self._inelastic: bool = options.get("inelastic", None)
+        self._element : str = options.get("element", None)
+
+    @property
+    def use_shear(self):
+        # Timoshenko beam theory.
+
+        if self.inelastic:
+            return True
+
+        from xcsi.csi import find_row
+        csi = self._csi
+        sect_asgn = find_row(csi["FRAME SECTION ASSIGNMENTS"],
+                             Frame=self.name)
+        section = self._instance.find(frame_section=sect_asgn["AnalSect"])
+        if section is None:
+            return True
+        return section.has_shear
+
+    @property 
+    def geometry(self):
+        if self._geometry is not None:
+            return self._geometry
+        return _FrameOptions.Geometry.Linear
+
+
+    @property
+    def inelastic(self)->bool:
+        "FRAME HINGE ASSIGNS 01 - OVERVIEW"
+        "FRAME HINGE ASSIGNS 00 - HINGE DISTRIBUTION TYPE"
+        return False
+        hinge = find_row(self._csi.get("FRAME HINGE ASSIGNS 00 - HINGE DISTRIBUTION TYPE",[]), 
+                         Frame=self.name)
+
+        if hinge and "Nonlinear" in hinge.get("HgeDistrTyp",""):
+            return True
+        
+        hinge = find_row(self._csi.get("FRAME HINGE ASSIGNS 01 - OVERVIEW",[]), 
+                         Frame=self.name)
+        if hinge and "Nonlinear" in hinge.get("HgeDistrTyp",""):
+            return True
+
+        return False

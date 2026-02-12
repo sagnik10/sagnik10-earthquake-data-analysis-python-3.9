@@ -1,0 +1,188 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+import json
+import shlex
+
+CONSTANTS = {
+    "Yes": True,
+    "No":  False
+}
+
+_SKIP = {
+    "PROJECT INFORMATION",
+    "FRAME DESIGN PROCEDURES",
+    "PREFERENCES - STEEL DESIGN - AISC 360-10",
+    "PREFERENCES - CONCRETE DESIGN - ACI 318-14",
+    "PREFERENCES - CONCRETE SHELL DESIGN - EUROCODE 2-2004",
+    "PREFERENCES - ALUMINUM DESIGN - AA-ASD 2000",
+    "MATERIAL PROPERTIES 09 - ACCEPTANCE CRITERIA",
+    "OPTIONS - COLORS - DISPLAY",
+    "OPTIONS - COLORS - OUTPUT",
+    "TABLES AUTOMATICALLY SAVED AFTER ANALYSIS",
+}
+
+def _parse_value(v):
+    if v in CONSTANTS:
+        return CONSTANTS[v]
+
+    try:
+        return json.loads(v)
+    except:
+        return v
+
+
+def load(file, append: dict=None, skip=None, fmt: str=None):
+    if fmt is None:
+        fmt = "txt"
+
+    if fmt == "xls":
+        return _load_xls(file, append=append, skip=skip)
+
+    return _load_txt(file, append=append, skip=skip)
+
+def _load_xls(file, append: dict=None, skip=None)->dict:
+    """
+    Aug 15, 2025
+    """
+    from openpyxl import load_workbook
+    wb = load_workbook(file, data_only=True, read_only=True)
+
+    if append is None:
+        tables = {}
+    else:
+        tables = append
+
+    for ws in wb.worksheets:
+
+        # Row 1: title (first non-empty cell)
+        first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+        if not first_row:
+            continue
+        title = next((str(v).strip() for v in first_row if v not in (None, "")), None)
+        if not title:
+            continue
+        else:
+            title = title.split(":")[1].strip().upper()
+
+        # Row 2: headers
+        header_row = next(ws.iter_rows(min_row=2, max_row=2, values_only=True), ())
+        if not header_row:
+            continue
+        headers = [str(h).strip() if h not in (None, "") else None for h in header_row]
+        # Take only non-empty headers
+        col_idx = [i for i, h in enumerate(headers) if h]
+        if not col_idx:
+            continue
+        header_names = [headers[i] for i in col_idx]
+
+        # Rows 4+: data (skip row 3)
+        records = []
+        for r in ws.iter_rows(min_row=4, values_only=True):
+            if r is None:
+                continue
+
+            vals = [(r[i] if i < len(r) else None) for i in col_idx]
+            if all(v in (None, "") for v in vals):
+                continue
+            rec = {k: _parse_value(v) for k, v in zip(header_names, vals)}
+            records.append(rec)
+
+        if records:
+            tables[title] = records
+
+    return tables
+
+
+def _load_txt(file, append: dict=None, skip:set=None)->dict:
+    """
+    Read file-like object file and form a dictionary. 
+
+    Returns
+    =======
+
+    csi: A dictionary with the layout:
+        {
+           "TABLE NAME": [
+            {"Key": "Val"},
+            ...
+           ]
+        }
+    """
+    if skip is None:
+        skip = _SKIP
+    if append is None:
+        tables = {}
+    else:
+        tables = append
+
+    current_table = None
+    current_item  = None
+    for line_no, line in enumerate(file):
+        if "END TABLE DATA" in line:
+            break
+
+        # Skip empty lines
+        if line.isspace():
+            continue
+
+        if "TABLE:" in line:
+            table_name = shlex.split(line)[1]
+            current_item  = None
+
+            # Append if table exists (append argument given)
+            if table_name in tables:
+                current_table = tables[table_name]
+            else:
+                current_table = []
+
+            tables[table_name] = current_table
+
+
+        # Data line
+        elif current_table is not None:
+
+            if current_item is None:
+
+                current_item = {}
+                current_table.append(current_item)
+
+            continue_item = False
+            try:
+                # Things are complicated by the fact we have to parse things like:
+                #    Key=Val'
+                # into "Key": "Val'"
+                #
+                lex = shlex.shlex(line, posix=True)
+                lex.quotes = '"'
+                lex.wordchars += "'"
+                lex.commenters = ""
+                lex.whitespace_split = True
+                tokens = list(lex)
+            except Exception as e:
+                raise ValueError(f"Error parsing line {line_no}: " + str(e))
+
+            for i,kv in enumerate(tokens):
+                # A "_" usually means a continuation of the previous line
+                # but sometimes it is just a random character.
+                if kv == "_":
+                    if i == len(tokens)-1:
+                        continue_item = True
+                        break
+
+                    # Sometimes there is a random "_" in the middle
+                    # of a line?
+                    else:
+                        continue
+
+                k, v = kv.split("=", maxsplit=1)
+                current_item[k] = _parse_value(v)
+
+            if not continue_item:
+                current_item = None
+
+    return tables
+

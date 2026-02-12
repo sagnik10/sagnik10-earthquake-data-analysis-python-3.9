@@ -1,0 +1,57 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+import warnings
+from .utility import find_row, find_rows
+import numpy as np
+from ._material import find_material
+
+
+def _create_shell_integration(csi, model, conv):
+    pass
+
+
+def _create_shell_section(assign, instance):
+    csi = instance._tree
+    model = instance.model
+    names = instance.names
+
+    section = find_row(csi["AREA SECTION PROPERTIES"],
+                        Section=assign["Section"]
+    )
+
+    tag = names.define("ShellSection", "section", assign["Section"])
+
+    material = find_material(csi, section["Material"])
+
+    model.section("ElasticShell", tag,
+                    material["E"],  # E
+                    material["v"],  # nu
+                    section["Thickness"],
+                    material["density"] if "density" in material else 0,
+    )
+    return tag
+
+
+def create_shell_sections(instance):
+    csi = instance._tree
+    model = instance.model
+    conv = instance.names
+
+
+    for assign in csi.get("AREA SECTION ASSIGNMENTS", []):
+        # if "Section" not in assign:
+        #     print(assign)
+        #     continue
+
+        if not conv.identify("ShellSection", "section",  assign["Section"]):
+
+            if not _create_shell_section(assign, instance):
+                warnings.warn(f"Section {assign['Section']} not found")
+                continue
+
+            # tag += len(library["shell_sections"][assign["Section"]].integration)
+

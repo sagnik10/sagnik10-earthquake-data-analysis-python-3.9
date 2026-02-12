@@ -1,0 +1,2 @@
+[console_scripts]
+xcsi = xcsi.__main__:main

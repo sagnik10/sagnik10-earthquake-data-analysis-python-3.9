@@ -1,0 +1,38 @@
+Metadata-Version: 2.4
+Name: shps
+Version: 0.0.30
+Summary: Shapes
+Author-email: "Claudio M. Perez" <50180406+claudioperez@users.noreply.github.com>
+Keywords: math,xara,differential-equations,engineering
+Description-Content-Type: text/markdown
+Requires-Dist: shapely
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: sympy
+Requires-Dist: xsection>=0.0.20
+Requires-Dist: matplotlib
+
+# shps
+
+<!--
+
+Shape functions, clean and simple.
+
+frame
+    mesh
+    state
+    shape
+    bases
+    gauss
+    nodes
+
+rotor
+
+rigid
+
+plane
+    shape
+solid
+
+-->
+

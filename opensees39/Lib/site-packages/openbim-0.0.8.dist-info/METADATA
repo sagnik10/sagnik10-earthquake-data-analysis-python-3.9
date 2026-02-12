@@ -1,0 +1,56 @@
+Metadata-Version: 2.4
+Name: openbim
+Version: 0.0.8
+Summary: Structure information modeling.
+Author-email: Issac Pang <101420268+issacpang@users.noreply.github.com>, "Claudio M. Perez" <50180406+claudioperez@users.noreply.github.com>
+Project-URL: Repository, https://github.com/STAIRLab/openbim
+Project-URL: Home, https://gallery.stairlab.io
+Keywords: dynamics,finite-element-analysis,structural-analysis,seismic,earthquake-engineering
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Programming Language :: C
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: Implementation :: CPython
+Classifier: Topic :: Software Development
+Classifier: Topic :: Scientific/Engineering
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX
+Classifier: Operating System :: Unix
+Classifier: Operating System :: MacOS
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: xara
+Requires-Dist: veux
+Requires-Dist: meshio
+Requires-Dist: numpy
+Requires-Dist: genson
+Dynamic: license-file
+
+
+<p align="center">
+  <a href="https://gallery.stairlab.io/">
+    <img src="https://veux.io/_static/images/stairlab_large.svg" alt="STAIRLab logo" width="200" height="165">
+  </a>
+</p>
+
+<h3 align="center">xbim</h3>
+
+
+<p align="center">
+  extended building information modeling
+  <br>
+  <a href="https://gallery.stairlab.io/"><strong>Explore the STAIRLab gallery »</strong></a>
+</p>
+
+
+

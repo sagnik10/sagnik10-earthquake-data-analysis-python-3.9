@@ -1,0 +1,204 @@
+from xcsi.csi.utility import find_row
+from shps.rotor import exp, log
+import numpy as np
+
+class Assembly:
+    def __init__(self, csi):
+        self._csi = csi 
+
+        self.dofs = {key:val for key,val in csi["ACTIVE DEGREES OF FREEDOM"][0].items() }
+        # self.dims = {key for key,val in csi["ACTIVE DEGREES OF FREEDOM"][0].items() }
+        self.ndf = sum(1 for v in csi["ACTIVE DEGREES OF FREEDOM"][0].values())
+        self.ndm = sum(1 
+                       for k,v in csi["ACTIVE DEGREES OF FREEDOM"][0].items()
+                        if k[0] == "U")
+        
+    @property 
+    def tables(self):
+        return self._csi
+
+    @property 
+    def units(self):
+        units = None 
+        unit_str = None
+        for row in self._csi["PROGRAM CONTROL"]:
+            if "CurrUnits" in row:
+                unit_str = row["CurrUnits"]
+        
+        if unit_str.lower() == "kip, ft, f":
+            import xara.units.fks as units
+        elif unit_str.lower() == "kip, in, f":
+            import xara.units.iks as units
+        elif unit_str.lower() == "lb, in, f":
+            import xara.units.ips as units
+        elif unit_str.lower() == "kn, m, c":
+            import xara.units.mks as units
+
+        return units
+
+    def _coordinate_system(self, name):
+        return CooridnateSystem(
+            find_row(self._csi.get("COORDINATE SYSTEMS", []),
+                     Name=name)
+        )
+
+    def create_frame(self, frame_entry):
+        """
+        frame_entry: row in "CONNECTIVITY - FRAME" table
+        """
+        class Frame:
+            def __init__(self, row, assembly: 'Assembly'):
+                self.name = row["Frame"]
+                self._row = row
+                self._assembly = assembly
+                self._csi = assembly.tables
+                self._section: "FrameSection" = None
+                self._section_assign = find_row(
+                    self._csi["FRAME SECTION ASSIGNMENTS"],
+                    Frame=self.name
+                )
+                self._section_general = find_row(
+                        self._csi["FRAME SECTION PROPERTIES 01 - GENERAL"],
+                        SectionName=self._section_assign["AnalSect"]
+                )
+                self._length = None
+
+            @property 
+            def prismatic(self)->bool:
+                sect_asgn = self._section_assign
+                return ("SectionType" not in sect_asgn)  or \
+                       (sect_asgn["SectionType"] != "Nonprismatic") or \
+                        sect_asgn["NPSectType"] == "Advanced"
+
+            @property
+            def mass(self)->float:
+                """
+                Return the total mass of the element.
+                """
+                csi = self._csi
+                sect_info = self._section_general
+                is_nonprismatic = (sect_info["Shape"] == "Nonprismatic")
+                if self.section is None:
+                    assert is_nonprismatic, "Section is None but section is prismatic"
+                    # TODO
+                    return 0.0
+
+                self_weight_mpl = 0.0
+                if "FRAME ADDED MASS ASSIGNMENTS" in csi:
+                    row = find_row(csi["FRAME ADDED MASS ASSIGNMENTS"],
+                                    Frame=self.name)
+                    additional_mass = row["MassPerLen"] if row else 0.0
+                else:
+                    additional_mass = 0.0
+
+                    # look for total mass and total length in
+                    # total mass for the entire nonprismatic section
+
+                    # self‐weight mass per length = total mass / total length
+                    # self_weight_mpl += sect_info.get("TotalMass", 0) #/ self.length
+                    # if not is_nonprismatic:
+                        # self‐weight mass per length = area * density
+                        # 1-014
+                    self_weight_mpl += self.section.mass
+
+                # Combine any assigned mass per length with self‐weight mass per length
+                return self_weight_mpl*self.length + additional_mass*self.length
+
+
+            @property
+            def length(self)->float:
+                if self._length is not None:
+                    return self._length
+                sect_asgn = self._section_assign
+                if "NPSectLen" in sect_asgn:
+                    total_length = sect_asgn["NPSectLen"]
+                else:
+                    # handle the case where NPSectLen doesn't exist
+                    xi = self._assembly._make_node(
+                        find_row(
+                            self._csi["JOINT COORDINATES"],
+                            Joint=self._row["JointI"]
+                        )
+                    ).location
+                    xj = self._assembly._make_node(
+                        find_row(
+                            self._csi["JOINT COORDINATES"],
+                            Joint=self._row["JointJ"]
+                        )
+                    ).location
+                    total_length = np.linalg.norm(np.array(xj) - np.array(xi))
+                self._length = total_length
+                return self._length
+
+            @property 
+            def section(self):
+                # This may return None if the element is non-prismatic
+                if self._section is None:
+                    sect_asgn = self._section_assign
+                    self._section = self._assembly._frame_section(sect_asgn["AnalSect"])
+                return self._section
+
+        return Frame(frame_entry, self)
+
+    def _frame_section(self, name):
+        from xcsi.csi._frame.section import iter_sections
+        for section,_ in iter_sections(self._csi):
+            if section.name == name:
+                return section
+        
+        for section,_ in iter_sections(self._csi, table="SECTION DESIGNER PROPERTIES 01 - GENERAL"):
+            if section.name == name:
+                return section
+
+
+    def _make_node(self, coord_entry):
+        """
+        coord_entry: row in "JOINT COORDINATES" table
+        """
+        class Node:
+            def __init__(self, row):
+                self._row = row
+            
+            @property
+            def location(self):
+                if self._row["CoordSys"] != "GLOBAL":
+                    return tuple(self._row[i] if i in self._row else 0.0 for i in ("GlobalX", "GlobalY", "GlobalZ"))
+                else:
+                    return tuple(self._row[i] if i in self._row else 0.0 for i in ("XorR", "Y", "Z"))
+
+        return Node(coord_entry)
+
+
+
+class CooridnateSystem:
+    class Chord:
+        @property 
+        def plane(self):
+            pass
+        @property
+        def angle(self):
+            pass
+        @property
+        def axis(self):
+            pass
+
+    def __init__(self, row):
+        self._row = row
+
+    def chord(self, _):
+        pass
+
+    @property
+    def rotation_vector(self):
+        return log(self.rotation_matrix)
+    
+    @property
+    def rotation_matrix(self):
+        def _rad(deg):
+            from math import pi
+            return deg * pi / 180.0
+        RZ = exp([0, 0, _rad(self._row["AboutZ"])])
+        RY = exp([0, _rad(self._row["AboutY"]), 0])
+        RX = exp([_rad(self._row["AboutX"]), 0, 0])
+        return RZ @ RY @ RX
+

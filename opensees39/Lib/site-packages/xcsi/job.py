@@ -1,0 +1,191 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+import xara
+from xcsi.csi import create_model
+from xcsi.names import Names
+from .assembly import Assembly
+from .options import ModelOptions
+
+class _Units:
+    pass
+
+
+class _Instance:
+
+    def __init__(self, job, 
+                 model=None, 
+                 options=None,
+                 verbose=0):
+        self._tree = job._tree
+        self._job = job
+        self._log_ = []
+        self._names = Names()
+        self._options = ModelOptions(self, options)
+        self.assembly = job.assembly
+
+
+        import xara
+        if model is None:
+            model = xara.Model(ndm=self.assembly.ndm, 
+                               ndf=self.assembly.ndf)
+        self._model = model
+
+        create_model(job._tree,
+                    model=self._model,
+                    instance=self,
+                    verbose=verbose)
+
+    @property
+    def units(self):
+        # deprecated, access through job.assembly.units
+        return self.assembly.units
+
+    @property
+    def names(self):
+        return self._names
+
+    @property
+    def model(self)->xara.Model:
+        return self._model
+    
+    @property 
+    def options(self):
+        return self._options
+
+
+    def find(self, **kwds):
+        return self._job.find(**kwds)
+    
+    def frame_outlines(self, frame_name):
+        ...
+    
+
+    def _log(self, message):
+        self._log_.append(message)
+    
+    def _print_log(self):
+        import sys
+        log = self._log_ + self._names._log
+
+        types = {i.name for i in log}
+
+        print("Unimplemented features", file=sys.stderr)
+        for item in types:
+            print(f"\t{item}: {sum(1 for i in log if i.name == item)}", file=sys.stderr)
+        
+        # for entry in log:
+        #     print(f"\t{entry}", file=sys.stderr)
+
+class Job:
+    def __init__(self, tree):
+        if not isinstance(tree, dict):
+            self._filename = tree
+            from xcsi._io import csiread
+            tree = csiread(tree)
+        self._tree = tree
+
+    @property
+    def units(self)->_Units:
+    
+        units = None
+        unit_str = None
+        for row in self._tree.get("PROGRAM CONTROL", []):
+            if "CurrUnits" in row:
+                unit_str = row["CurrUnits"]
+        
+        if unit_str.lower() == "kip, ft, f":
+            import xara.units.fks as units
+        elif unit_str.lower() == "kip, in, f":
+            import xara.units.iks as units
+        elif unit_str.lower() == "lb, in, f":
+            import xara.units.ips as units
+        elif unit_str.lower() == "kn, m, c":
+            import xara.units.mks as units
+
+        return units
+
+    @property 
+    def assembly(self):
+        if not hasattr(self, "_assembly"):
+            self._assembly = Assembly(self._tree)
+        return self._assembly
+
+    def find(self, **kwds):
+
+        if "frame_section" in kwds:
+            from xcsi.csi._frame.section import iter_sections
+            for section,_ in iter_sections(self._tree):
+                if section.name == kwds["frame_section"]:
+                    return section
+            
+            for section,_ in iter_sections(self._tree, table="SECTION DESIGNER PROPERTIES 01 - GENERAL"):
+                if section.name == kwds["frame_section"]:
+                    return section
+
+    def instance(self, model=None, options=None, verbose=0)->_Instance:
+        return _Instance(self, model=model, options=options, verbose=verbose)
+
+
+    def pattern(self, name):
+        from xcsi._loading import LoadPattern
+        return LoadPattern(name, self.assembly)
+
+    def patterns(self):
+        for pattern in self._tree.get("LOAD PATTERN DEFINITIONS", []):
+            yield self.pattern(pattern["LoadPat"])
+
+    def find_case(self, name):
+        from xcsi.csi.analysis import (
+            LinearStaticAnalysis, ModalAnalysis, NonlinearStaticAnalysis
+        )
+        for case in self._tree.get("LOAD CASE DEFINITIONS", []):
+            if case["Case"] != name:
+                continue
+    
+            if case["Type"] == "LinStatic":
+                return LinearStaticAnalysis(case["Case"], self)
+
+            elif case["Type"] == "LinDirHist":
+                pass
+
+            elif case["Type"] == "LinModal":
+                return ModalAnalysis(case["Case"], self)
+
+            elif case["Type"] == "NonStatic":
+                return NonlinearStaticAnalysis(case["Case"], self)
+
+            else:
+                continue
+                raise ValueError(f"Unsupported case type: {case['Type']}")
+
+    def cases(self):
+        from xcsi.csi.analysis import (
+            LinearStaticAnalysis, ModalAnalysis, NonlinearStaticAnalysis
+        )
+
+        for case in self._tree.get("LOAD CASE DEFINITIONS", []):
+            if not case.get("RunCase", False):
+                continue
+
+            if case["Type"] == "LinStatic":
+                yield LinearStaticAnalysis(case["Case"], self)
+
+            elif case["Type"] == "LinDirHist":
+                pass
+
+            elif case["Type"] == "LinModal":
+                yield ModalAnalysis(case["Case"], self)
+
+            elif case["Type"] == "NonStatic":
+                yield NonlinearStaticAnalysis(case["Case"], self)
+
+            else:
+                continue
+                raise ValueError(f"Unsupported case type: {case['Type']}")
+
+    # Deprecated 
+    steps = cases

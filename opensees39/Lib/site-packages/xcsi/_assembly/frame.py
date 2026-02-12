@@ -1,0 +1,359 @@
+
+from xcsi.csi.utility import find_row, find_rows, UnimplementedInstance
+import numpy as np
+import warnings
+from xcsi.csi._material import find_material
+
+from xsection import ElasticConstants
+from xsection import PolygonSection as Polygon, CompositeSection
+from xsection.library import (
+    WideFlange, 
+    Rectangle, 
+    Equigon, 
+    Circle, 
+    HollowRectangle, 
+    Angle, 
+    Pipe
+)
+
+from xara.benchmarks import create_section as create_xara_section
+
+CIRCLE_DIVS = 40
+
+class FrameSection:
+    def __init__(self, csi, prop_01, mode=None):
+        self._mode = mode
+
+        if isinstance(prop_01, str):
+            name = prop_01
+            prop_01 = find_row(csi.get("FRAME SECTION PROPERTIES 01 - GENERAL",[]), SectionName=name)
+            if prop_01 is None:
+                raise ValueError(f"Section {name} not found.")
+        else:
+            name = prop_01["SectionName"]
+        
+        self.name = name
+
+        self._prop_01 = prop_01
+        self._csi = csi
+
+        self._elastic = None
+
+    @property
+    def has_shear(self):
+        e = self.elastic()
+        return e is not None and e.Ay != 0 and e.Az != 0
+    
+
+    @property 
+    def has_uniaxial(self):
+        material = self.material
+        return False 
+    
+    @property 
+    def has_multiaxial(self):
+        material = self.material
+        if material is not None:
+            return material.get("E",None) is not None and \
+                   material.get("G",None) is not None
+        return False
+
+    @property 
+    def material(self):
+        if "Material" not in self._prop_01:
+            return None
+        return find_material(self._csi, self._prop_01["Material"])
+
+    @property 
+    def mass(self):
+        if "TotalMass" in self._prop_01:
+            elements = find_rows(self._csi.get("FRAME SECTION ASSIGNMENTS", []), AnalSect=self.name)
+            length = 0.0 
+            for elem in elements:
+                frame = find_row(self._csi.get("CONNECTIVITY - FRAME", []), Frame=elem["Frame"])
+                length += frame["Length"]
+            total =  self._prop_01["TotalMass"]/length
+            return total
+        A = self._prop_01.get("Area", 0.0)
+        material = self.material
+        rho = material["density"]
+        return A * rho
+
+    # Simulation
+    def create_fibers(self, mesh_scale=None, **kwds):
+        return self._create_model(mesh_scale=mesh_scale).create_fibers(**kwds)
+
+
+    def elastic(self):
+        prop_01 = self._prop_01
+        csi = self._csi
+
+        if self._elastic is None:
+            self._elastic = _find_elastic(csi, prop_01)
+
+        return self._elastic
+    
+
+    def _create_model(self, mesh_size=None, render_only=True):
+        csi = self._csi
+        prop_01 = self._prop_01
+        name = self.name
+        details = not render_only
+
+        centroid = np.array([-prop_01.get("CGOffset3", 0), 
+                              prop_01.get("CGOffset2", 0)])
+
+        #
+        # First skip over non-basic sections if we need detailed model
+        #
+        shape = self._prop_01.get("Shape", "SD Section")
+
+        if details and (shape in {"SD Section", "Bridge Section"}):
+            pass
+
+        elif details and find_row(csi.get("FRAME SECTION PROPERTIES 02 - CONCRETE COLUMN",[]), SectionName=name):
+            pass
+
+
+        #
+        # Begin matching homogeneous standard shapes
+        #
+        elif shape == "Circle":
+            r = prop_01["t3"]/2
+            return Circle(
+                radius=r,
+                divisions=CIRCLE_DIVS,
+                z=0,
+                mesh_scale=mesh_size,
+                centroid=centroid,
+            )
+
+        elif shape == "I/Wide Flange":
+            # Example 1-018a.s2k
+            return WideFlange(
+                d=prop_01["t3"],
+                b=prop_01["t2"],
+                tf=prop_01["tf"],
+                tw=prop_01["tw"],
+                centroid=centroid,
+            )
+        
+
+        elif shape == "Rectangular":
+            from xsection.library import Rectangle
+            return Rectangle(d=prop_01["t3"], 
+                             b=prop_01["t2"],
+                             centroid=centroid,
+            )
+        
+        # elif shape == "Pipe":
+        #     return Pipe(radius=prop_01["t3"]/2,
+        #                 thickness=prop_01["tw"],
+        #                 centroid=centroid)
+        
+        elif shape=="Box/Tube":
+            from xsection.library import HollowRectangle
+
+            "SECTION DESIGNER PROPERTIES 09 - SHAPE BOX/TUBE"
+            # t3=4.5   t2=4.5   tf=0.8   tw=0.8
+            return HollowRectangle(
+                d=prop_01["t3"],
+                b=prop_01["t2"],
+                tf=prop_01["tf"],
+                tw=prop_01["tw"],
+                centroid=centroid,
+                # elastic = self.elastic()
+            )
+        
+
+        elif shape == "SD Section":
+            prop_sd = find_row(csi.get("SECTION DESIGNER PROPERTIES 01 - GENERAL", []), SectionName=name)
+            shapes = []
+
+            for shape in find_rows(csi.get("SD STRESS-STRAIN 06 - CONCRETE MANDER CONFINED CIRCLE", []), SectionName=name):
+
+                if shape["Part"] == "Core": 
+                    z = 1
+
+                shapes.append(
+                    Circle(
+                        radius=shape["CnfDiam"]/2,
+                        z=z)
+                )
+                
+                bar = Circle(
+                             radius=np.sqrt(shape["CnfBarArea"])/2, 
+                             z=2, 
+                             mesh_scale=1/2, 
+                             divisions=4, 
+                             name="rebar")
+
+                shapes.extend([
+
+                ])
+
+            if prop_sd["nPolygon"] > 0:
+                polygon_data = csi.get("SECTION DESIGNER PROPERTIES 16 - SHAPE POLYGON", [])
+                # if mesh_size is None:
+                #     raise ValueError("Mesh size must be provided for polygonal sections")
+                interior = []
+                exterior = None
+                for srow in find_rows(polygon_data, SectionName=name):
+                    if srow.get("ShapeMat","") != "Opening":
+                        exterior =  np.array([
+                            [row["X"], row["Y"]]
+                            for row in (find_rows(polygon_data, SectionName=name, ShapeName=srow["ShapeName"]))  #row.get("ShapeName","")=="Polygon1"
+                        ])
+                        break
+
+                if exterior is not None:
+
+                    for hole in find_rows(polygon_data, SectionName=name, ShapeMat="Opening"):
+                        interior.append(np.array([
+                            [row["X"], row["Y"]]
+                            for row in find_rows(polygon_data, ShapeName=hole["ShapeName"], SectionName=name)
+                        ]))
+
+                    shapes.append(
+                        Polygon(exterior,
+                                interior, 
+                                mesh_size=1/100,
+                        )
+                    )
+
+            for shape in find_rows(csi.get("SECTION DESIGNER PROPERTIES 07 - SHAPE ANGLE", []), SectionName=name):
+                tf = shape["FlngThick"]
+                tw = shape["WebThick"]
+                assert tf == tw, "Angle section must have equal flange and web thicknesses"
+
+                shapes.append(
+                    Angle(
+                        d=shape["Height"],
+                        b=shape["Width"],
+                        t=tf,
+                        centroid=centroid,
+                        z=shape.get("Zorder",0))
+                )
+
+            for circle in find_rows(csi.get("SECTION DESIGNER PROPERTIES 24 - SHAPE CALTRANS CIRCLE", []), SectionName=name):
+                if details:
+                    return None
+    
+                assert circle["Height"] == circle["Width"]
+                r = circle["Height"]/2
+                exterior = np.array([
+                    [np.sin(x)*r, np.cos(x)*r] for x in np.linspace(0, np.pi*2, CIRCLE_DIVS)
+                ])
+                shapes.append(
+                    Polygon(exterior, 
+                               mesh_size=r/5,
+                    )
+                )
+
+
+            for row in find_rows(csi.get("SECTION DESIGNER PROPERTIES 26 - SHAPE CALTRANS OCTAGON", []), SectionName=name):
+                assert row["Height"] == row["Width"]
+                shapes.append(
+                    Equigon(
+                        row["Height"]/2,
+                        divisions=8,
+                        z=0)
+                )
+
+                shapes.extend([
+
+                ])
+
+            if len(shapes) == 0:
+                warnings.warn(f"Section {name} has no shapes defined in SECTION DESIGNER PROPERTIES 01 - GENERAL")
+                return None
+            elif len(shapes) == 1:
+                return shapes[0]#.translate(-centroid)
+            else:
+                return CompositeSection(shapes)
+
+
+        #
+        # BRIDGE SECTIONS
+        #
+        elif shape == "Bridge Section":
+
+            polygon_data = csi.get("FRAME SECTION PROPERTIES 06 - POLYGON DATA", [])
+
+            cbg = find_row(csi.get("BRIDGE SECTION DEFINITIONS 02 - CONCRETE BOX GIRDER", []), Section=name)
+            if cbg:
+                pass
+
+            elif polygon_data and not details:
+                if mesh_size is None:
+                    if render_only:
+                        mesh_size=10
+                    else:
+                        raise ValueError("Mesh size must be provided for polygonal sections")
+                
+                interior = []
+                exterior_row = find_row(polygon_data, SectionName=name, Opening=False)
+                exterior =  np.array([
+                    [row["X"], row["Y"]]
+                    for row in sorted(find_rows(polygon_data, SectionName = name, Polygon=exterior_row["Polygon"]),
+                                      key=lambda r: r["Point"], reverse=True)
+                ])
+                ref = (exterior_row["RefPtX"],  exterior_row["RefPtY"])
+
+                for i in range(len(exterior)):
+                    exterior[i] -= ref
+
+
+                for hole in find_rows(polygon_data, SectionName=name, Opening=True):
+                    interior.append(np.array([
+                        [row["X"], row["Y"]]
+                        for row in sorted(find_rows(polygon_data, Polygon=hole["Polygon"]), 
+                                          key=lambda r: r["Point"], reverse=True)
+                    ]))
+                    for i in range(len(interior[-1])):
+                        interior[-1][i] -= ref
+
+
+                return Polygon(exterior,
+                               interior, 
+                               mesh_size=mesh_size,
+                        )#.translate(-centroid)
+
+#
+#
+#
+def _find_elastic(csi, prop_01):
+
+    material = find_material(csi, prop_01["Material"])
+    E = material["E"]
+    G = material["G"]
+    Iy = prop_01["I33"]*prop_01.get("I3Mod", 1)
+    Iz = prop_01["I22"]*prop_01.get("I2Mod", 1)
+    if Iy == 0.0:
+        Iy = Iz
+    if Iz == 0.0:
+        Iz = Iy
+    J = prop_01["TorsConst"]*prop_01.get("JMod", 1)
+    if J == 0.0:
+        J = (Iy + Iz)*100
+
+    return ElasticConstants(
+            A  = prop_01["Area"]*prop_01.get("AMod", 1),
+            Ay = prop_01["AS3"]*prop_01.get("A3Mod", 1),
+            Az = prop_01["AS2"]*prop_01.get("A2Mod", 1),
+            Iy = Iy,
+            Iz = Iz,
+            J  = J,
+            E  = E,
+            G  = G
+        )
+    return ElasticConstants(
+            A  = prop_01["Area"]*prop_01.get("AMod", 1),
+            Ay = prop_01["AS3"]*prop_01.get("A2Mod", 1),
+            Az = prop_01["AS2"]*prop_01.get("A3Mod", 1), # TODO: check this!!!
+            Iy = prop_01["I22"]*prop_01.get("I2Mod", 1),
+            Iz = prop_01["I33"]*prop_01.get("I3Mod", 1),
+            J  = prop_01["TorsConst"]*prop_01.get("JMod", 1),
+            E  = E,
+            G  = G
+        )

@@ -1,0 +1,178 @@
+#===----------------------------------------------------------------------===#
+#
+#         STAIRLab -- STructural Artificial Intelligence Laboratory
+#
+#===----------------------------------------------------------------------===#
+#
+from ..utility import find_row, find_rows
+import numpy as np
+import warnings
+from veux.frame import SectionGeometry
+
+from xcsi._assembly.frame import CIRCLE_DIVS as _CIRCLE_DIVS, FrameSection
+
+
+def _find_polygons(csi, prop_01) -> SectionGeometry:
+    """
+    was previously section_geometry(csi, prop_01)
+
+    POST-PROCESSING
+    """
+    #
+    if isinstance(prop_01, str):
+        name = prop_01
+        prop_01 = find_row(csi.get("FRAME SECTION PROPERTIES 01 - GENERAL",[]), SectionName=name)
+        if prop_01 is None:
+            prop_01 = find_row(csi.get("FRAME SECTION PROPERTIES - BRIDGE OBJECT FLAGS",[]), SectionName=name)
+            if prop_01 is None:
+                raise ValueError(f"Section {name} not found in either table.")
+    else:
+        name = prop_01["SectionName"]
+
+    s = FrameSection(csi, prop_01)._create_model(render_only=True)
+
+    if s is not None:
+        return SectionGeometry(s.exterior(), interior=s.interior())
+
+
+
+class FrameQuadrature:
+    def __init__(self, sections, locations=None, geometry: list=None, name=None):
+        self._sections  = sections
+        self._locations = locations
+        self._geometry  = geometry
+        self._name = name 
+
+    def __repr__(self):
+        if self._name is not None:
+            return f"FrameQuadrature({self._name})"
+        else:
+            return f"FrameQuadrature({len(self._sections)} sections, {len(self._geometry)} geometries)"
+
+    @classmethod
+    def from_table(cls, csi, prop_01):
+        # 1)
+        name = prop_01["SectionName"]
+        if prop_01["Shape"] != "Nonprismatic":
+            geometry = _find_polygons(csi, prop_01)
+            if geometry is not None:
+                geometry = [geometry, geometry]
+
+            return FrameQuadrature([], #[section, section],
+                                   geometry=geometry, name=name)
+
+        row = find_row(csi.get("FRAME SECTION PROPERTIES 05 - NONPRISMATIC", []),
+                        SectionName=prop_01["SectionName"])
+
+        # 2)
+        if row["StartSect"] == row["EndSect"]:
+            si = find_row(csi["FRAME SECTION PROPERTIES 01 - GENERAL"], 
+                                SectionName=row["StartSect"])
+
+            assert si is not None
+
+            geometry = _find_polygons(csi, si)
+            if geometry is not None:
+                geometry = [geometry, geometry]
+            return FrameQuadrature([], #[section, section],
+                                   geometry=geometry, name=name)
+
+        # 3)
+        else:
+            si = find_row(csi["FRAME SECTION PROPERTIES 01 - GENERAL"],
+                            SectionName=row["StartSect"])
+            sj   = find_row(csi["FRAME SECTION PROPERTIES 01 - GENERAL"],
+                            SectionName=row["EndSect"])
+
+            if si["Shape"] == sj["Shape"] and si["Shape"] in {"Circle"}:
+                circumference = np.linspace(0, np.pi*2, _CIRCLE_DIVS)
+                exteriors = np.array([
+                    [[np.sin(x)*r, np.cos(x)*r] for x in circumference]
+                    for r in np.linspace(si["t3"]/2, sj["t3"]/2, 2)
+                ])
+                return FrameQuadrature([], 
+                                       geometry = [SectionGeometry(exterior) for exterior in exteriors])
+
+
+    def geometry(self):
+        if self._geometry is not None:
+            return [i for i in self._geometry]
+
+
+
+def collect_geometry(csi, elem_maps=None):
+    """
+    collect a mapping of SectionGeometry for all frames elements in a model.
+
+    This is a POST-PROCESSING function, used for rendering extruded frames.
+
+    TODO: Reimplement as loop over iter_sections()
+    """
+
+    frame_types = {
+        row["SectionName"]: FrameQuadrature.from_table(csi, row)
+        for row in csi.get("FRAME SECTION PROPERTIES 01 - GENERAL", [])
+    }
+
+    frame_assigns = {}
+
+    for row in csi.get("FRAME SECTION ASSIGNMENTS",[]):
+        if row["MatProp"] != "Default":
+            warnings.warn(f"Material property {row['MatProp']} not implemented.")
+
+        if row["AnalSect"] in frame_types and frame_types[row["AnalSect"]] is not None:
+            if frame_types[row["AnalSect"]].geometry() is None:
+                warnings.warn(f"Unknown geometry for section {row['AnalSect']}")
+                continue
+            frame_assigns[row["Frame"]] = frame_types[row["AnalSect"]].geometry()
+
+
+    # Skew angles
+    E2 = np.array([0, 0,  1])
+    for frame in frame_assigns:
+        skew_assign = find_row(csi.get("FRAME END SKEW ANGLE ASSIGNMENTS", []),
+                               Frame=frame)
+
+        if skew_assign: #and skew["SkewI"] != 0 and skew["SkewJ"] != 0: # and len(frame_assigns[frame].shape) == 2
+            for i,skew in zip((0,-1), ("SkewI", "SkewJ")):
+                exterior = frame_assigns[frame][i].exterior()
+                interior = frame_assigns[frame][i].interior()
+
+                R = _ExpSO3(skew_assign[skew]*np.pi/180*E2)
+                frame_assigns[frame][i] = SectionGeometry(interior=[np.array([[(R@point)[0], *point[1:]] for point in hole]) for hole in interior],
+                                                          exterior=np.array([[(R@point)[0], *point[1:]]  for point in exterior])
+                )
+
+    if elem_maps is not None:
+        return {
+            elem_maps.get(name,name): val for name, val in frame_assigns.items()
+        }
+    else:
+        return frame_assigns
+
+
+def _HatSO3(vec):
+    """Construct a skew-symmetric matrix from a 3-vector."""
+    return np.array([
+        [0, -vec[2], vec[1]],
+        [vec[2], 0, -vec[0]],
+        [-vec[1], vec[0], 0]
+    ])
+
+
+def _ExpSO3(vec):
+    """
+    Exponential map for SO(3).
+    Satisfies ExpSO3(vec) == expm(skew(vec)).
+    """
+    vec = np.asarray(vec)
+    if vec.shape != (3,):
+        raise ValueError("Input must be a 3-vector.")
+
+    theta = np.linalg.norm(vec)
+    if theta < 1e-8:  # Small-angle approximation
+        return np.eye(3) + _HatSO3(vec) + 0.5 * (_HatSO3(vec) @ _HatSO3(vec))
+    else:
+        K = _HatSO3(vec / theta)  # Normalized skew matrix
+        return np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
+

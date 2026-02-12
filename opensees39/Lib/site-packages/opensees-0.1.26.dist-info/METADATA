@@ -1,0 +1,100 @@
+Metadata-Version: 2.4
+Name: opensees
+Version: 0.1.26
+Summary: Nonlinear finite element analysis.
+Project-URL: Repository, https://github.com/peer-open-source/xara
+Project-URL: Documentation, https://xara.so
+Project-URL: Examples, https://gallery.stairlab.io
+Keywords: computational-mechanics,structural-engineering,finite-element-analysis,earthquake,engineering,xara
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: C
+Classifier: Programming Language :: C++
+Classifier: Programming Language :: Fortran
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Scientific/Engineering
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX
+Classifier: Operating System :: Unix
+Classifier: Operating System :: MacOS
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: shps>=0.0.14
+Requires-Dist: numpy<1.20.0; python_version < "3.8"
+Requires-Dist: numpy; python_version >= "3.8"
+Requires-Dist: tcinter>=1.0; platform_python_implementation == "PyPy" or sys_platform == "emscripten"
+Requires-Dist: mkl; sys_platform == "win32"
+Requires-Dist: intel-fortran-rt; sys_platform == "win32"
+Requires-Dist: prompt_toolkit
+Requires-Dist: platformdirs
+Provides-Extra: tcl
+Requires-Dist: tcinter>=0.6; extra == "tcl"
+Dynamic: license-file
+
+
+<img align="left" src="https://raw.githubusercontent.com/claudioperez/sdof/master/docs/assets/peer-black-300.png" width="150px" alt="PEER Logo">
+
+Nonlinear finite element analysis.
+
+<br>
+
+<div style="align:center">
+
+[![Latest PyPI version](https://img.shields.io/pypi/v/opensees?logo=pypi)](https://pypi.python.org/pypi/opensees)
+[![](https://img.shields.io/conda/v/opensees/opensees?color=%23660505)](https://anaconda.org/opensees/opensees)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/opensees)](https://pypi.org/project/opensees)
+
+</div>
+
+<p style="text-align: center;">
+<b>This package is provided for legacy purposes. New projects should use the <a href="https://pypi.org/project/xara">xara</a> package, which is documented at <a href="https://xara.so">https://xara.so</a>.</b>
+</p>
+
+<!-- Badge links -->
+
+[pypi-d-image]: https://img.shields.io/pypi/dm/opensees.svg
+[license-badge]: https://img.shields.io/pypi/l/opensees.svg
+[pypi-d-link]: https://pypi.org/project/opensees
+[pypi-v-image]: https://img.shields.io/pypi/v/opensees.svg
+[pypi-v-link]: https://pypi.org/project/opensees
+
+<!--
+## Support
+
+<table align="center" style="border: 0;">
+
+ <tr style="background-color:rgba(0, 0, 0, 0);">
+  <td style="background-color:rgba(0, 0, 0, 0);" >
+    <a href="https://peer.berkeley.edu">
+    <img src="https://raw.githubusercontent.com/claudioperez/sdof/master/docs/assets/peer-black-300.png"
+         alt="PEER Logo" width="200"/>
+    </a>
+  </td>
+
+  <td>
+    <a href="https://dot.ca.gov/">
+    <img src="https://raw.githubusercontent.com/claudioperez/sdof/master/docs/assets/Caltrans.svg.png"
+         alt="Caltrans Logo" width="200"/>
+    </a>
+  </td>
+
+  <td>
+    <a href="https://stairlab.berkeley.edu">
+    <img src="https://raw.githubusercontent.com/claudioperez/sdof/master/docs/assets/stairlab.svg"
+         alt="STAIRlab Logo" width="200"/>
+    </a>
+  </td>
+ 
+ </tr>
+</table>
+-->
+

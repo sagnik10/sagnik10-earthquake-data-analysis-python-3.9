@@ -1,0 +1,2 @@
+[console_scripts]
+veux = veux.__main__:main
