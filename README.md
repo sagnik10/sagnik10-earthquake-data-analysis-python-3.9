@@ -42,7 +42,7 @@ The project is suitable for:
 
 ```bash
 git clone <repository-url>
-cd earthquake-data-analysis-python39
+cd earthquake-data-analysis-python-3.9
 ```
 
 ### 2️⃣ Create a Virtual Environment (Recommended)
